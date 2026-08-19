@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "build-x402-server": {
+      "source": "coinbase/cdp-sdk",
+      "sourceType": "github",
+      "skillPath": "skills/build-x402-server/SKILL.md",
+      "computedHash": "eed3d6761538a227eee858fb3ec05979e889046996f7f8e126fa728042e64cf7"
+    }
+  }
+}
