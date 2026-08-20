@@ -1,0 +1,276 @@
+{
+  "schema_version": "1.1",
+  "tariff_id": "srp:E-26",
+  "marketing_name": "SRP Time-Of-Use Price Plan",
+
+  "utility": {
+    "name": "Salt River Project Agricultural Improvement and Power District",
+    "slug": "srp",
+    "eia_utility_id": null,
+    "regulator": "SRP publicly elected Board of Directors"
+  },
+
+  "customer_class": "residential",
+  "service_type": "electric",
+
+  "availability": {
+    "status": "frozen",
+    "frozen_as_of": "2025-11",
+    "eliminated_as_of": "2029-11",
+    "successor_tariff_id": "srp:E-28",
+    "eligibility_notes": "Frozen from new participation as of the November 2025 billing cycle; may be eliminated earlier if administrative capability allows. Limited to residential customers without on-site generation, plus grandfathered on-site generation customers who by December 8, 2014 either (a) originally installed the on-site generation at the residence, (b) delivered SRP a fully executed installation contract, or (c) had an SRP Residential Solar Electric Program Application pending — and in each case interconnected with SRP's grid by February 26, 2016. Grandfathered service applies at the residence where the system was originally installed and continues until the later of November 1, 2025 or 20 years after initial interconnection. The exception runs with the property, applying to the initial customer of record and any subsequent customer of record at that residence. Customers may cancel and elect another plan but may not re-elect this plan for at least one year after cancellation."
+  },
+
+  "effective": {
+    "from_billing_cycle": "2026-05",
+    "through_billing_cycle": "2026-10",
+    "base_effective_from_billing_cycle": "2025-11",
+    "supersedes": "May 2019 Billing Cycle",
+    "published_date": "2026-04-27"
+  },
+
+  "time_basis": {
+    "timezone": "America/Phoenix",
+    "observes_dst": false,
+    "filed_in_standard_time": true
+  },
+
+  "seasons": [
+    { "name": "summer", "basis": "billing_cycle", "billing_cycle_months": [5, 6, 9, 10] },
+    { "name": "summer_peak", "basis": "billing_cycle", "billing_cycle_months": [7, 8] },
+    { "name": "winter", "basis": "billing_cycle", "billing_cycle_months": [11, 12, 1, 2, 3, 4] }
+  ],
+
+  "period_calendar": {
+    "default_period": "off_peak",
+    "windows": [
+      {
+        "period": "on_peak",
+        "date_range": { "from": "05-01", "to": "10-31" },
+        "days": ["MON", "TUE", "WED", "THU", "FRI"],
+        "start": "14:00",
+        "end": "20:00",
+        "applies_on_holidays": false
+      },
+      {
+        "period": "on_peak",
+        "date_range": { "from": "11-01", "to": "04-30" },
+        "days": ["MON", "TUE", "WED", "THU", "FRI"],
+        "start": "05:00",
+        "end": "09:00",
+        "applies_on_holidays": false
+      },
+      {
+        "period": "on_peak",
+        "date_range": { "from": "11-01", "to": "04-30" },
+        "days": ["MON", "TUE", "WED", "THU", "FRI"],
+        "start": "17:00",
+        "end": "21:00",
+        "applies_on_holidays": false
+      }
+    ],
+    "holiday_rule": {
+      "observed_holidays": [
+        "New Year's Day (observed)",
+        "Memorial Day",
+        "Independence Day (observed)",
+        "Labor Day",
+        "Thanksgiving Day",
+        "Christmas Day (observed)"
+      ],
+      "suspends_periods": ["on_peak"],
+      "fallback_period": "off_peak"
+    }
+  },
+
+  "charges": [
+    {
+      "type": "monthly_service",
+      "unit": "USD_per_month",
+      "categorical_tiers": [
+        {
+          "key": "tier_1",
+          "criteria": "Single unit in a multiple family house, apartment, condominium, townhouse, or patio home, with service of 0-225 amps",
+          "amount": 20.00,
+          "components": [
+            { "name": "Billing and Customer Service", "amount": 14.00 },
+            { "name": "Meter", "amount": 5.03 },
+            { "name": "Distribution Facilities", "amount": 0.97 }
+          ]
+        },
+        {
+          "key": "tier_2",
+          "criteria": "Any dwelling type to which Tier 1 is not applicable, with service of 0-225 amps",
+          "amount": 30.00,
+          "components": [
+            { "name": "Billing and Customer Service", "amount": 14.00 },
+            { "name": "Meter", "amount": 5.03 },
+            { "name": "Distribution Facilities", "amount": 10.97 }
+          ]
+        },
+        {
+          "key": "tier_3",
+          "criteria": "Any residence with service of more than 225 amps",
+          "amount": 40.00,
+          "components": [
+            { "name": "Billing and Customer Service", "amount": 14.00 },
+            { "name": "Meter", "amount": 5.03 },
+            { "name": "Distribution Facilities", "amount": 20.97 }
+          ]
+        }
+      ]
+    },
+
+    {
+      "type": "energy",
+      "unit": "USD_per_kWh",
+      "season": "summer",
+      "period": "on_peak",
+      "amount": 0.2251,
+      "components": [
+        { "name": "Billing and Customer Service", "amount": 0.0089 },
+        { "name": "Distribution Facilities", "amount": 0.0036 },
+        { "name": "Distribution Delivery", "amount": 0.0268 },
+        { "name": "Transmission", "amount": 0.0136 },
+        { "name": "Transmission Cost Adjustment", "amount": -0.0006 },
+        { "name": "Ancillary Services 1-2", "amount": 0.0043 },
+        { "name": "Ancillary Services 3-6", "amount": 0.0021 },
+        { "name": "System Benefits", "amount": 0.0034 },
+        { "name": "Generation", "amount": 0.1117 },
+        { "name": "Fuel and Purchased Power Adjustment", "amount": 0.0513 }
+      ]
+    },
+    {
+      "type": "energy",
+      "unit": "USD_per_kWh",
+      "season": "summer",
+      "period": "off_peak",
+      "amount": 0.0865,
+      "components": [
+        { "name": "Billing and Customer Service", "amount": 0.0035 },
+        { "name": "Distribution Facilities", "amount": 0.0014 },
+        { "name": "Distribution Delivery", "amount": 0.0106 },
+        { "name": "Transmission", "amount": 0.0054 },
+        { "name": "Transmission Cost Adjustment", "amount": -0.0006 },
+        { "name": "Ancillary Services 1-2", "amount": 0.0017 },
+        { "name": "Ancillary Services 3-6", "amount": 0.0008 },
+        { "name": "System Benefits", "amount": 0.0034 },
+        { "name": "Generation", "amount": 0.0201 },
+        { "name": "Fuel and Purchased Power Adjustment", "amount": 0.0402 }
+      ]
+    },
+
+    {
+      "type": "energy",
+      "unit": "USD_per_kWh",
+      "season": "summer_peak",
+      "period": "on_peak",
+      "amount": 0.2566,
+      "components": [
+        { "name": "Billing and Customer Service", "amount": 0.0101 },
+        { "name": "Distribution Facilities", "amount": 0.0041 },
+        { "name": "Distribution Delivery", "amount": 0.0305 },
+        { "name": "Transmission", "amount": 0.0155 },
+        { "name": "Transmission Cost Adjustment", "amount": -0.0006 },
+        { "name": "Ancillary Services 1-2", "amount": 0.0049 },
+        { "name": "Ancillary Services 3-6", "amount": 0.0023 },
+        { "name": "System Benefits", "amount": 0.0034 },
+        { "name": "Generation", "amount": 0.1351 },
+        { "name": "Fuel and Purchased Power Adjustment", "amount": 0.0513 }
+      ]
+    },
+    {
+      "type": "energy",
+      "unit": "USD_per_kWh",
+      "season": "summer_peak",
+      "period": "off_peak",
+      "amount": 0.0888,
+      "components": [
+        { "name": "Billing and Customer Service", "amount": 0.0036 },
+        { "name": "Distribution Facilities", "amount": 0.0015 },
+        { "name": "Distribution Delivery", "amount": 0.0109 },
+        { "name": "Transmission", "amount": 0.0055 },
+        { "name": "Transmission Cost Adjustment", "amount": -0.0006 },
+        { "name": "Ancillary Services 1-2", "amount": 0.0017 },
+        { "name": "Ancillary Services 3-6", "amount": 0.0008 },
+        { "name": "System Benefits", "amount": 0.0034 },
+        { "name": "Generation", "amount": 0.0218 },
+        { "name": "Fuel and Purchased Power Adjustment", "amount": 0.0402 }
+      ]
+    },
+
+    {
+      "type": "energy",
+      "unit": "USD_per_kWh",
+      "season": "winter",
+      "period": "on_peak",
+      "amount": 0.1209,
+      "components": [
+        { "name": "Billing and Customer Service", "amount": 0.0047 },
+        { "name": "Distribution Facilities", "amount": 0.0019 },
+        { "name": "Distribution Delivery", "amount": 0.0142 },
+        { "name": "Transmission", "amount": 0.0072 },
+        { "name": "Transmission Cost Adjustment", "amount": -0.0006 },
+        { "name": "Ancillary Services 1-2", "amount": 0.0023 },
+        { "name": "Ancillary Services 3-6", "amount": 0.0011 },
+        { "name": "System Benefits", "amount": 0.0034 },
+        { "name": "Generation", "amount": 0.0316 },
+        { "name": "Fuel and Purchased Power Adjustment", "amount": 0.0551 }
+      ]
+    },
+    {
+      "type": "energy",
+      "unit": "USD_per_kWh",
+      "season": "winter",
+      "period": "off_peak",
+      "amount": 0.0891,
+      "components": [
+        { "name": "Billing and Customer Service", "amount": 0.0035 },
+        { "name": "Distribution Facilities", "amount": 0.0014 },
+        { "name": "Distribution Delivery", "amount": 0.0105 },
+        { "name": "Transmission", "amount": 0.0053 },
+        { "name": "Transmission Cost Adjustment", "amount": -0.0006 },
+        { "name": "Ancillary Services 1-2", "amount": 0.0017 },
+        { "name": "Ancillary Services 3-6", "amount": 0.0008 },
+        { "name": "System Benefits", "amount": 0.0034 },
+        { "name": "Generation", "amount": 0.0191 },
+        { "name": "Fuel and Purchased Power Adjustment", "amount": 0.0440 }
+      ]
+    },
+
+    {
+      "type": "minimum_bill",
+      "unit": "USD_per_month",
+      "references_charge": "monthly_service"
+    }
+  ],
+
+  "unmodeled_provisions": [
+    {
+      "summary": "A $0.0017 portion of the System Benefits component funds energy efficiency programs and is capped at $300,000 per customer per SRP fiscal year; past the cap SRP credits $0.0017 per kWh for the remainder of the year.",
+      "affects": "System Benefits component of every energy charge"
+    },
+    {
+      "summary": "SRP may raise or lower the Fuel and Purchased Power price, and may adjust the Transmission Cost Adjustment concurrently with changes to its Open Access Transmission Tariff, at its discretion between filings.",
+      "affects": "Fuel and Purchased Power Adjustment and Transmission Cost Adjustment components"
+    },
+    {
+      "summary": "Billings are increased or decreased in proportion to taxes, fees, or charges levied by any governmental authority, excluding income taxes.",
+      "affects": "bill total"
+    }
+  ],
+
+  "taxes": {
+    "included_in_rates": false,
+    "notes": "Resolve applicable state, county, and municipal rates from the territory resolver and apply downstream."
+  },
+
+  "source": {
+    "document_title": "SRP Standard Electric Price Plans (includes temporary decrease to Fuel and Purchased Power Adjustment effective May 2026 - October 2026 billing cycles), E-26",
+    "document_url": "https://www.srpnet.com/assets/srpnet/pdf/price-plans/2025-Ratebook-with-Temporary-FPPAM.pdf",
+    "page_refs": ["48-53"],
+    "retrieved_at": "2026-08-19",
+    "verified_by": "Courtney",
+    "confidence": "verified"
+  }
+}

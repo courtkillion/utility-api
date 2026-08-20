@@ -1,0 +1,348 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://killionapps.com/schemas/tariff/v1.1",
+  "title": "Utility Tariff",
+  "description": "Machine-readable retail electric price plan. v1.1 changes from v1.0, all forced by modeling real SRP filings: (1) charges carry an unbundled component breakdown, because filed rates are stated as component stacks and the fuel adjustment must be separable from base rates; (2) monthly service charges support categorical tiers keyed on dwelling type and service amperage, which are not numeric usage blocks; (3) the holiday rule is scoped to specific periods, because a holiday can suspend on-peak while super-off-peak still applies; (4) unmodeled_provisions records conditional terms the schema deliberately cannot express.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "tariff_id",
+    "utility",
+    "customer_class",
+    "service_type",
+    "availability",
+    "effective",
+    "time_basis",
+    "seasons",
+    "period_calendar",
+    "charges",
+    "source"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.1" },
+
+    "tariff_id": {
+      "type": "string",
+      "description": "Stable slug, namespaced by utility. Example: 'srp:E-26'.",
+      "pattern": "^[a-z0-9-]+:[A-Za-z0-9._-]+$"
+    },
+
+    "marketing_name": { "type": "string" },
+
+    "utility": {
+      "type": "object",
+      "required": ["name", "slug"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "slug": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+        "eia_utility_id": { "type": ["integer", "null"] },
+        "regulator": { "type": "string" }
+      }
+    },
+
+    "customer_class": {
+      "type": "string",
+      "enum": ["residential", "small_commercial", "large_commercial", "industrial", "agricultural", "lighting", "pumping"]
+    },
+
+    "service_type": { "type": "string", "enum": ["electric"] },
+
+    "availability": {
+      "type": "object",
+      "required": ["status"],
+      "additionalProperties": false,
+      "properties": {
+        "status": { "type": "string", "enum": ["open", "frozen", "discontinued", "pilot"] },
+        "frozen_as_of": { "$ref": "#/$defs/billingCycle" },
+        "eliminated_as_of": { "$ref": "#/$defs/billingCycle" },
+        "successor_tariff_id": {
+          "type": "string",
+          "description": "Plan customers are moved to on elimination."
+        },
+        "eligibility_notes": { "type": "string" }
+      }
+    },
+
+    "effective": {
+      "type": "object",
+      "required": ["from_billing_cycle"],
+      "additionalProperties": false,
+      "properties": {
+        "from_billing_cycle": { "$ref": "#/$defs/billingCycle" },
+        "through_billing_cycle": { "$ref": "#/$defs/billingCycle" },
+        "base_effective_from_billing_cycle": {
+          "type": "string",
+          "description": "When base (non-adjustment) prices took effect, if earlier than from_billing_cycle. A temporary adjustment creates a shorter window than the underlying rate change."
+        },
+        "supersedes": { "type": "string" },
+        "published_date": { "type": "string", "format": "date" }
+      }
+    },
+
+    "time_basis": {
+      "type": "object",
+      "required": ["timezone", "observes_dst"],
+      "additionalProperties": false,
+      "properties": {
+        "timezone": { "type": "string" },
+        "observes_dst": { "type": "boolean" },
+        "filed_in_standard_time": { "type": "boolean" }
+      }
+    },
+
+    "seasons": {
+      "type": "array",
+      "description": "Seasons select WHICH PRICES apply and are usually defined by billing cycle. Peak-hour windows are defined by calendar date. These boundaries do not coincide; keep them separate.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "basis"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "basis": { "type": "string", "enum": ["billing_cycle", "calendar_date"] },
+          "billing_cycle_months": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 1, "maximum": 12 }
+          },
+          "date_ranges": { "type": "array", "items": { "$ref": "#/$defs/dateRange" } }
+        }
+      }
+    },
+
+    "period_calendar": {
+      "type": "object",
+      "required": ["default_period", "windows"],
+      "additionalProperties": false,
+      "properties": {
+        "default_period": { "$ref": "#/$defs/periodName" },
+        "windows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["period", "days", "start", "end"],
+            "additionalProperties": false,
+            "properties": {
+              "period": { "$ref": "#/$defs/periodName" },
+              "date_range": { "$ref": "#/$defs/dateRange" },
+              "days": {
+                "type": "array",
+                "items": { "type": "string", "enum": ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"] }
+              },
+              "start": { "$ref": "#/$defs/clockTime" },
+              "end": { "$ref": "#/$defs/clockTime" },
+              "applies_on_holidays": {
+                "type": "boolean",
+                "description": "Whether this window still applies on an observed holiday. Super-off-peak windows typically do; on-peak windows typically do not."
+              }
+            }
+          }
+        },
+        "holiday_rule": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "observed_holidays": { "type": "array", "items": { "type": "string" } },
+            "suspends_periods": {
+              "type": "array",
+              "description": "Which periods a holiday suspends. Scoped rather than global — a holiday can suspend on-peak while leaving super-off-peak in force.",
+              "items": { "$ref": "#/$defs/periodName" }
+            },
+            "fallback_period": { "$ref": "#/$defs/periodName" }
+          }
+        }
+      }
+    },
+
+    "charges": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/charge" } },
+
+    "adjustments": {
+      "type": "array",
+      "description": "Use ONLY for adjustments stated separately from the rate tables. When a filing folds the adjustment into the component stack (the common case), model it as a component named in the stack and leave this empty.",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "amount"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "type": { "type": "string", "enum": ["per_kwh", "per_kw", "per_month", "percent_of_subtotal"] },
+          "amount": { "type": "number" },
+          "temporary": { "type": "boolean" },
+          "applies_to": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "seasons": { "type": "array", "items": { "type": "string" } },
+              "periods": { "type": "array", "items": { "$ref": "#/$defs/periodName" } }
+            }
+          },
+          "effective_from_billing_cycle": { "$ref": "#/$defs/billingCycle" },
+          "effective_through_billing_cycle": { "$ref": "#/$defs/billingCycle" }
+        }
+      }
+    },
+
+    "riders": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "optional"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "optional": { "type": "boolean" },
+          "eligibility_notes": { "type": "string" },
+          "charges": { "type": "array", "items": { "$ref": "#/$defs/charge" } }
+        }
+      }
+    },
+
+    "unmodeled_provisions": {
+      "type": "array",
+      "description": "Conditional terms present in the filing that this schema deliberately does not express — annual caps, discretionary clauses, formula-driven credits. Recording them keeps the gap visible instead of silently wrong, and they should surface as caveats in any API response.",
+      "items": {
+        "type": "object",
+        "required": ["summary"],
+        "additionalProperties": false,
+        "properties": {
+          "summary": { "type": "string" },
+          "affects": { "type": "string" }
+        }
+      }
+    },
+
+    "taxes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "included_in_rates": { "type": "boolean" },
+        "notes": { "type": "string" }
+      }
+    },
+
+    "source": {
+      "type": "object",
+      "required": ["document_url", "retrieved_at"],
+      "additionalProperties": false,
+      "properties": {
+        "document_title": { "type": "string" },
+        "document_url": { "type": "string", "format": "uri" },
+        "page_refs": { "type": "array", "items": { "type": "string" } },
+        "retrieved_at": { "type": "string", "format": "date" },
+        "verified_by": { "type": "string" },
+        "confidence": { "type": "string", "enum": ["verified", "parsed_unreviewed"] }
+      },
+      "if": {
+        "properties": { "confidence": { "const": "verified" } },
+        "required": ["confidence"]
+      },
+      "then": {
+        "required": ["verified_by", "page_refs"]
+      }
+    }
+  },
+
+  "$defs": {
+    "periodName": {
+      "type": "string",
+      "enum": ["on_peak", "shoulder_peak", "off_peak", "super_off_peak"]
+    },
+
+    "billingCycle": {
+      "type": "string",
+      "description": "A named billing month, not a date. Format YYYY-MM.",
+      "pattern": "^[0-9]{4}-[0-9]{2}$"
+    },
+
+    "clockTime": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$" },
+
+    "dateRange": {
+      "type": "object",
+      "description": "Month/day only — recurs annually and may wrap the year boundary.",
+      "required": ["from", "to"],
+      "additionalProperties": false,
+      "properties": {
+        "from": { "type": "string", "pattern": "^[0-1][0-9]-[0-3][0-9]$" },
+        "to": { "type": "string", "pattern": "^[0-1][0-9]-[0-3][0-9]$" }
+      }
+    },
+
+    "component": {
+      "type": "object",
+      "description": "One line of an unbundled rate stack, exactly as named in the filing.",
+      "required": ["name", "amount"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "amount": { "type": "number" }
+      }
+    },
+
+    "charge": {
+      "type": "object",
+      "required": ["type", "unit"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "enum": ["monthly_service", "energy", "demand", "minimum_bill"] },
+        "unit": { "type": "string", "enum": ["USD_per_month", "USD_per_kWh", "USD_per_kW"] },
+        "season": { "type": "string" },
+        "period": { "$ref": "#/$defs/periodName" },
+        "amount": {
+          "type": "number",
+          "description": "The billed total. When components are present this MUST equal their sum — validate it."
+        },
+        "components": {
+          "type": "array",
+          "description": "Unbundled breakdown. Required in practice for anything a caller may want to recompute (e.g. reverting a temporary fuel adjustment).",
+          "items": { "$ref": "#/$defs/component" }
+        },
+        "categorical_tiers": {
+          "type": "array",
+          "description": "Tiers selected by a customer attribute rather than by usage volume — dwelling type, service amperage, voltage level.",
+          "items": {
+            "type": "object",
+            "required": ["key", "amount"],
+            "additionalProperties": false,
+            "properties": {
+              "key": { "type": "string" },
+              "criteria": { "type": "string" },
+              "amount": { "type": "number" },
+              "components": { "type": "array", "items": { "$ref": "#/$defs/component" } }
+            }
+          }
+        },
+        "tiers": {
+          "type": "array",
+          "description": "Usage block rates. Contiguous and ascending; final tier omits 'to'.",
+          "items": {
+            "type": "object",
+            "required": ["from", "rate"],
+            "additionalProperties": false,
+            "properties": {
+              "from": { "type": "number", "minimum": 0 },
+              "to": { "type": ["number", "null"] },
+              "rate": { "type": "number" }
+            }
+          }
+        },
+        "demand_measurement": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "interval_minutes": { "type": "integer" },
+            "basis": { "type": "string", "enum": ["monthly_maximum", "average_of_daily_maxima", "ratchet"] },
+            "measured_during": { "$ref": "#/$defs/periodName" }
+          }
+        },
+        "references_charge": {
+          "type": "string",
+          "description": "For minimum_bill: the charge type whose value sets the floor."
+        }
+      }
+    }
+  }
+}
