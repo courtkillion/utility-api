@@ -1,37 +1,269 @@
+"""Utility tariff API.
+
+Endpoints:
+    GET  /v1/tariff/plans   list available tariffs (free -- discovery aid)
+    GET  /v1/tariff/rate    per-kWh rate at a moment in time
+    POST /v1/tariff/bill    itemized bill from usage intervals
+
+Payment is applied only when CDP credentials are present in the environment,
+so the app runs unpaid locally and paid in production without a code change.
+"""
+
+from __future__ import annotations
+
+import os
+from datetime import datetime
+from pathlib import Path
+from typing import List, Optional
+
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from cdp.x402 import create_facilitator_config
-from fastapi import FastAPI
-from x402.http import HTTPFacilitatorClient, PaymentOption
-from x402.http.middleware.fastapi import PaymentMiddlewareASGI
-from x402.http.types import RouteConfig
-from x402.mechanisms.evm.exact import ExactEvmServerScheme
-from x402.server import x402ResourceServer
+from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel, Field
 
-NETWORK = "eip155:84532"          # Base Sepolia
-PAY_TO = "0x28Bf61F081331Bf69DA51688B6fC802677Ab4AC8"
+from tariff.calculate import (
+    TariffDataError,
+    UnsupportedTariffError,
+    assert_billable,
+    calculate_bill,
+    classify_period,
+    resolve_season,
+)
 
-server = x402ResourceServer(HTTPFacilitatorClient(create_facilitator_config()))
-server.register(NETWORK, ExactEvmServerScheme())
+import json
 
-routes = {
-    "GET /v1/pod/price": RouteConfig(
-        accepts=[
-            PaymentOption(
-                scheme="exact", pay_to=PAY_TO, price="$0.001", network=NETWORK
-            )
-        ],
-        mime_type="application/json",
-        description="POD listing price solver",
+DATA_DIR = Path(__file__).resolve().parent / "data" / "tariffs"
+
+# --------------------------------------------------------------------------
+# registry -- load every tariff at startup, including unsupported ones so the
+# API can explain *why* they are refused rather than 404ing on them
+# --------------------------------------------------------------------------
+
+def _load_registry():
+    registry = {}
+    for path in sorted(DATA_DIR.rglob("*.json")):
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+        registry[doc["tariff_id"]] = doc
+    return registry
+
+
+TARIFFS = _load_registry()
+
+
+def _get(tariff_id: str):
+    doc = TARIFFS.get(tariff_id)
+    if doc is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "unknown_tariff",
+                "tariff_id": tariff_id,
+                "available": sorted(TARIFFS),
+            },
+        )
+    try:
+        assert_billable(doc)
+    except UnsupportedTariffError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "unsupported_tariff",
+                "tariff_id": tariff_id,
+                "reason": str(exc),
+                "guidance": "This plan contains terms the current data model cannot express. A bill computed for it would be wrong, so it is refused deliberately.",
+            },
+        )
+    return doc
+
+
+def _assert_in_effective_window(doc, year: int, month: int):
+    """Refuse dates outside the tariff's effective window.
+
+    A temporary adjustment gives a file a short window -- E-26 and E-21 currently
+    hold May-October 2026 prices. Answering for November with those rates would be
+    silently wrong, which is worse than refusing.
+    """
+    eff = doc["effective"]
+    cycle = f"{year:04d}-{month:02d}"
+    through = eff.get("through_billing_cycle")
+    if cycle < eff["from_billing_cycle"] or (through and cycle > through):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "outside_effective_window",
+                "tariff_id": doc["tariff_id"],
+                "requested_billing_cycle": cycle,
+                "effective_from": eff["from_billing_cycle"],
+                "effective_through": through,
+                "guidance": "This file holds prices for the stated billing cycles only. Another filing governs the requested cycle.",
+            },
+        )
+
+
+# --------------------------------------------------------------------------
+# models
+# --------------------------------------------------------------------------
+
+class Interval(BaseModel):
+    t: datetime = Field(description="Wall clock time in the tariff's filed timezone (SRP files in MST, no DST).")
+    kwh: float = Field(ge=0)
+
+
+class BillRequest(BaseModel):
+    tariff_id: str = Field(examples=["srp:E-26"])
+    intervals: List[Interval] = Field(min_length=1, max_length=9000)
+    service_tier: str = Field(default="tier_2", examples=["tier_1", "tier_2", "tier_3"])
+    billing_month: Optional[int] = Field(default=None, ge=1, le=12,
+                                         description="Billing cycle month. Inferred from the first interval when omitted.")
+
+
+# --------------------------------------------------------------------------
+# routes
+# --------------------------------------------------------------------------
+
+app = FastAPI(
+    title="Utility Tariff API",
+    description="Exact residential electric rates and bills for Arizona utilities, computed from filed tariffs with citations.",
+    version="0.1.0",
+)
+
+
+@app.get("/v1/tariff/plans")
+async def list_plans() -> dict:
+    """Free. Lists what can be priced, so a caller knows before paying."""
+    out = []
+    for tid, doc in sorted(TARIFFS.items()):
+        try:
+            assert_billable(doc)
+            billable, reason = True, None
+        except UnsupportedTariffError as exc:
+            billable, reason = False, str(exc)
+        out.append({
+            "tariff_id": tid,
+            "marketing_name": doc.get("marketing_name"),
+            "utility": doc["utility"]["name"],
+            "customer_class": doc["customer_class"],
+            "status": doc["availability"]["status"],
+            "effective_from_billing_cycle": doc["effective"]["from_billing_cycle"],
+            "billable": billable,
+            "not_billable_reason": reason,
+        })
+    return {"plans": out, "count": len(out)}
+
+
+@app.get("/v1/tariff/rate")
+async def get_rate(
+    tariff_id: str = Query(examples=["srp:E-26"]),
+    at: datetime = Query(description="Local wall clock time, e.g. 2026-07-15T15:00:00"),
+    billing_month: Optional[int] = Query(default=None, ge=1, le=12,
+                                         description="Defaults to the month of 'at'. Set explicitly when the billing cycle differs from the calendar month."),
+) -> dict:
+    """The per-kWh price in force at a single moment, with its components."""
+    doc = _get(tariff_id)
+    month = billing_month or at.month
+    _assert_in_effective_window(doc, at.year, month)
+
+    try:
+        period = classify_period(at, doc)
+        season = resolve_season(month, doc)
+    except TariffDataError as exc:
+        raise HTTPException(status_code=422, detail={"error": "tariff_data_error", "reason": str(exc)})
+
+    charge = next(
+        (c for c in doc["charges"]
+         if c["type"] == "energy" and c.get("season") == season and c.get("period") == period),
+        None,
     )
-}
+    if charge is None:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "no_price", "season": season, "period": period},
+        )
 
-app = FastAPI()
-app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
+    return {
+        "tariff_id": tariff_id,
+        "at": at.isoformat(),
+        "timezone": doc["time_basis"]["timezone"],
+        "observes_dst": doc["time_basis"]["observes_dst"],
+        "billing_month": month,
+        "season": season,
+        "period": period,
+        "rate_per_kwh": charge["amount"],
+        "currency": "USD",
+        "components": charge.get("components", []),
+        "source": doc["source"],
+        "caveats": [p["summary"] for p in doc.get("unmodeled_provisions", [])],
+    }
 
 
-@app.get("/v1/pod/price")
-async def pod_price() -> dict:
-    return {"listing_price": 32.00, "net_profit": 12.00}
+@app.post("/v1/tariff/bill")
+async def post_bill(req: BillRequest) -> dict:
+    """An itemized bill from usage intervals."""
+    doc = _get(req.tariff_id)
+    first = req.intervals[0].t
+    _assert_in_effective_window(doc, first.year, req.billing_month or first.month)
+    try:
+        return calculate_bill(
+            doc,
+            [(i.t, i.kwh) for i in req.intervals],
+            service_tier=req.service_tier,
+            billing_month=req.billing_month,
+        )
+    except TariffDataError as exc:
+        raise HTTPException(status_code=422, detail={"error": "tariff_data_error", "reason": str(exc)})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"error": "bad_request", "reason": str(exc)})
+
+
+# --------------------------------------------------------------------------
+# payment layer -- applied only when credentials exist
+# --------------------------------------------------------------------------
+
+NETWORK = os.getenv("X402_NETWORK", "eip155:84532")   # Base Sepolia by default
+PAY_TO = os.getenv("X402_PAY_TO")
+
+if os.getenv("CDP_API_KEY_ID") and PAY_TO:
+    from cdp.x402 import create_facilitator_config
+    from x402.http import HTTPFacilitatorClient, PaymentOption
+    from x402.http.middleware.fastapi import PaymentMiddlewareASGI
+    from x402.http.types import RouteConfig
+    from x402.mechanisms.evm.exact import ExactEvmServerScheme
+    from x402.server import x402ResourceServer
+
+    server = x402ResourceServer(HTTPFacilitatorClient(create_facilitator_config()))
+    server.register(NETWORK, ExactEvmServerScheme())
+
+    def _option(price):
+        return PaymentOption(scheme="exact", pay_to=PAY_TO, price=price, network=NETWORK)
+
+    routes = {
+        "GET /v1/tariff/rate": RouteConfig(
+            accepts=[_option("$0.02")],
+            mime_type="application/json",
+            description=(
+                "Exact residential electric rate for Salt River Project (Phoenix metro, Arizona) "
+                "at a specific date and time. Resolves time-of-use period from the filed peak-hour "
+                "calendar including observed holidays and super-off-peak windows, resolves season "
+                "from the billing cycle, and returns the per-kWh price with its full unbundled "
+                "component breakdown and a citation to the filed ratebook. Inputs: tariff_id "
+                "(e.g. srp:E-26), at (ISO 8601 local time). Call /v1/tariff/plans first, free, "
+                "to list available plans."
+            ),
+        ),
+        "POST /v1/tariff/bill": RouteConfig(
+            accepts=[_option("$0.25")],
+            mime_type="application/json",
+            description=(
+                "Itemized residential electric bill for Salt River Project (Phoenix metro, Arizona) "
+                "from hourly usage intervals. Classifies every interval into its time-of-use period, "
+                "applies seasonal rates, adds the monthly service charge for the dwelling tier, "
+                "applies the minimum bill, and returns line items plus an aggregated component "
+                "breakdown with a citation to the filed ratebook."
+            ),
+        ),
+    }
+
+    app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
