@@ -42,28 +42,64 @@ DATA_DIR = Path(__file__).resolve().parent / "data" / "tariffs"
 # --------------------------------------------------------------------------
 
 def _load_registry():
+    """tariff_id -> list of versions, oldest first.
+
+    A tariff is a SERIES of filings, not one document. Each file covers a
+    billing-cycle window; a rate case or a temporary adjustment adds a file
+    rather than replacing one, so historical cycles stay answerable.
+    """
     registry = {}
     for path in sorted(DATA_DIR.rglob("*.json")):
         with open(path, encoding="utf-8") as fh:
             doc = json.load(fh)
-        registry[doc["tariff_id"]] = doc
+        registry.setdefault(doc["tariff_id"], []).append(doc)
+    for versions in registry.values():
+        versions.sort(key=lambda d: d["effective"]["from_billing_cycle"])
     return registry
 
 
 TARIFFS = _load_registry()
 
 
-def _get(tariff_id: str):
-    doc = TARIFFS.get(tariff_id)
-    if doc is None:
+def _covers(doc, cycle: str) -> bool:
+    eff = doc["effective"]
+    through = eff.get("through_billing_cycle")
+    return eff["from_billing_cycle"] <= cycle and (through is None or cycle <= through)
+
+
+def _windows(versions):
+    return [
+        {
+            "from": d["effective"]["from_billing_cycle"],
+            "through": d["effective"].get("through_billing_cycle"),
+        }
+        for d in versions
+    ]
+
+
+def _select(tariff_id: str, year: int, month: int):
+    """Pick the filing that governs a billing cycle, or refuse with the windows we do have."""
+    versions = TARIFFS.get(tariff_id)
+    if not versions:
         raise HTTPException(
             status_code=404,
+            detail={"error": "unknown_tariff", "tariff_id": tariff_id, "available": sorted(TARIFFS)},
+        )
+
+    cycle = f"{year:04d}-{month:02d}"
+    doc = next((d for d in versions if _covers(d, cycle)), None)
+    if doc is None:
+        raise HTTPException(
+            status_code=422,
             detail={
-                "error": "unknown_tariff",
+                "error": "outside_effective_window",
                 "tariff_id": tariff_id,
-                "available": sorted(TARIFFS),
+                "requested_billing_cycle": cycle,
+                "covered_windows": _windows(versions),
+                "guidance": "No filing on record governs that billing cycle.",
             },
         )
+
     try:
         assert_billable(doc)
     except UnsupportedTariffError as exc:
@@ -77,30 +113,6 @@ def _get(tariff_id: str):
             },
         )
     return doc
-
-
-def _assert_in_effective_window(doc, year: int, month: int):
-    """Refuse dates outside the tariff's effective window.
-
-    A temporary adjustment gives a file a short window -- E-26 and E-21 currently
-    hold May-October 2026 prices. Answering for November with those rates would be
-    silently wrong, which is worse than refusing.
-    """
-    eff = doc["effective"]
-    cycle = f"{year:04d}-{month:02d}"
-    through = eff.get("through_billing_cycle")
-    if cycle < eff["from_billing_cycle"] or (through and cycle > through):
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "error": "outside_effective_window",
-                "tariff_id": doc["tariff_id"],
-                "requested_billing_cycle": cycle,
-                "effective_from": eff["from_billing_cycle"],
-                "effective_through": through,
-                "guidance": "This file holds prices for the stated billing cycles only. Another filing governs the requested cycle.",
-            },
-        )
 
 
 # --------------------------------------------------------------------------
@@ -145,9 +157,10 @@ async def root() -> dict:
             "Every response cites the filing it came from."
         ),
         "coverage": {
-            "utilities": sorted({d["utility"]["name"] for d in TARIFFS.values()}),
-            "plans": sorted(TARIFFS),
+            "utilities": sorted({v["utility"]["name"] for vs in TARIFFS.values() for v in vs}),
+            "plans": {tid: _windows(vs) for tid, vs in sorted(TARIFFS.items())},
             "customer_class": "residential",
+            "note": "Each plan lists the billing-cycle windows on record. Cycles outside them return HTTP 422.",
         },
         "endpoints": {
             "GET /v1/tariff/plans": "List available plans and whether each can be billed. Free.",
@@ -169,22 +182,24 @@ async def root() -> dict:
 async def list_plans() -> dict:
     """Free. Lists what can be priced, so a caller knows before paying."""
     out = []
-    for tid, doc in sorted(TARIFFS.items()):
-        try:
-            assert_billable(doc)
-            billable, reason = True, None
-        except UnsupportedTariffError as exc:
-            billable, reason = False, str(exc)
-        out.append({
-            "tariff_id": tid,
-            "marketing_name": doc.get("marketing_name"),
-            "utility": doc["utility"]["name"],
-            "customer_class": doc["customer_class"],
-            "status": doc["availability"]["status"],
-            "effective_from_billing_cycle": doc["effective"]["from_billing_cycle"],
-            "billable": billable,
-            "not_billable_reason": reason,
-        })
+    for tid, versions in sorted(TARIFFS.items()):
+        for doc in versions:
+            try:
+                assert_billable(doc)
+                billable, reason = True, None
+            except UnsupportedTariffError as exc:
+                billable, reason = False, str(exc)
+            out.append({
+                "tariff_id": tid,
+                "marketing_name": doc.get("marketing_name"),
+                "utility": doc["utility"]["name"],
+                "customer_class": doc["customer_class"],
+                "status": doc["availability"]["status"],
+                "effective_from_billing_cycle": doc["effective"]["from_billing_cycle"],
+                "effective_through_billing_cycle": doc["effective"].get("through_billing_cycle"),
+                "billable": billable,
+                "not_billable_reason": reason,
+            })
     return {"plans": out, "count": len(out)}
 
 
@@ -196,9 +211,8 @@ async def get_rate(
                                          description="Defaults to the month of 'at'. Set explicitly when the billing cycle differs from the calendar month."),
 ) -> dict:
     """The per-kWh price in force at a single moment, with its components."""
-    doc = _get(tariff_id)
     month = billing_month or at.month
-    _assert_in_effective_window(doc, at.year, month)
+    doc = _select(tariff_id, at.year, month)
 
     try:
         period = classify_period(at, doc)
@@ -236,9 +250,8 @@ async def get_rate(
 @app.post("/v1/tariff/bill")
 async def post_bill(req: BillRequest) -> dict:
     """An itemized bill from usage intervals."""
-    doc = _get(req.tariff_id)
     first = req.intervals[0].t
-    _assert_in_effective_window(doc, first.year, req.billing_month or first.month)
+    doc = _select(req.tariff_id, first.year, req.billing_month or first.month)
     try:
         return calculate_bill(
             doc,

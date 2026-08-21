@@ -142,6 +142,7 @@ def test_filename_matches_tariff_id(path):
     """Guards against the E-21 / E-22 confusion — both are marketed as EZ-3."""
     doc = load(path)
     slug = doc["tariff_id"].split(":", 1)[1].lower()
-    assert path.stem.lower() == slug, (
+    assert path.stem.lower().split("@")[0] == slug, (
         f"{path.name} holds tariff_id {doc['tariff_id']}"
     )
+

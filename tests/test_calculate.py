@@ -36,7 +36,7 @@ DATA = Path(__file__).resolve().parent.parent / "data" / "tariffs" / "srp"
 
 @pytest.fixture(scope="module")
 def e26():
-    return load_tariff(DATA / "e-26.json")
+    return load_tariff(DATA / "e-26@2026-05.json")
 
 
 def flat_day(d, kwh_per_hour=1.0):
@@ -192,10 +192,11 @@ class TestChargesAndGuards:
         worse than no bill.
         """
         with pytest.raises(UnsupportedTariffError):
-            load_tariff(DATA / "e-28.json")
+            load_tariff(DATA / "e-28@2025-11.json")
 
     def test_result_carries_its_citation(self, e26):
         bill = calculate_bill(e26, flat_day(datetime(2026, 7, 15)),
                               service_tier="tier_1", billing_month=7)
         assert bill["source"]["document_url"].startswith("https://")
         assert bill["source"]["confidence"] in {"verified", "parsed_unreviewed"}
+
