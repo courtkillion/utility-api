@@ -5,3 +5,4 @@ python-dotenv
 jsonschema
 x402[evm,fastapi]
 cdp-sdk
+mcp[cli]
