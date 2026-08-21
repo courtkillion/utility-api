@@ -124,11 +124,45 @@ class BillRequest(BaseModel):
 # routes
 # --------------------------------------------------------------------------
 
+NETWORK = os.getenv("X402_NETWORK", "eip155:84532")   # Base Sepolia by default
+PAY_TO = os.getenv("X402_PAY_TO")
+
 app = FastAPI(
     title="Utility Tariff API",
     description="Exact residential electric rates and bills for Arizona utilities, computed from filed tariffs with citations.",
     version="0.1.0",
 )
+
+
+@app.get("/")
+async def root() -> dict:
+    """Free. What this service is, and where to go next."""
+    return {
+        "service": "Utility Tariff API",
+        "what_it_does": (
+            "Returns exact residential electric rates and itemized bills for Arizona "
+            "utilities, computed from filed tariff documents rather than estimates. "
+            "Every response cites the filing it came from."
+        ),
+        "coverage": {
+            "utilities": sorted({d["utility"]["name"] for d in TARIFFS.values()}),
+            "plans": sorted(TARIFFS),
+            "customer_class": "residential",
+        },
+        "endpoints": {
+            "GET /v1/tariff/plans": "List available plans and whether each can be billed. Free.",
+            "GET /v1/tariff/rate": "Per-kWh rate at a moment in time, with component breakdown.",
+            "POST /v1/tariff/bill": "Itemized bill from usage intervals.",
+        },
+        "docs": "/docs",
+        "openapi": "/openapi.json",
+        "payment": {
+            "protocol": "x402",
+            "network": NETWORK,
+            "note": "Paid endpoints return HTTP 402 with terms in the payment-required header.",
+        },
+        "operator": "Killion Apps",
+    }
 
 
 @app.get("/v1/tariff/plans")
@@ -221,9 +255,6 @@ async def post_bill(req: BillRequest) -> dict:
 # --------------------------------------------------------------------------
 # payment layer -- applied only when credentials exist
 # --------------------------------------------------------------------------
-
-NETWORK = os.getenv("X402_NETWORK", "eip155:84532")   # Base Sepolia by default
-PAY_TO = os.getenv("X402_PAY_TO")
 
 if os.getenv("CDP_API_KEY_ID") and PAY_TO:
     from cdp.x402 import create_facilitator_config
