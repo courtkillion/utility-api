@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+pydantic
+python-dotenv
+jsonschema
+x402[evm,fastapi]
+cdp-sdk
